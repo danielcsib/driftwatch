@@ -30,6 +30,9 @@ func NewDetector() *Detector {
 }
 
 // Detect compares the desired config against the actual config and returns drift details.
+// It checks for differences in image, environment variables, and labels.
+// Keys present in actual but absent in desired are not flagged as drift;
+// only keys required by desired are enforced.
 func (d *Detector) Detect(desired, actual *ServiceConfig) DriftResult {
 	result := DriftResult{
 		ServiceName: desired.Name,
@@ -72,4 +75,18 @@ func Checksum(cfg *ServiceConfig) (string, error) {
 		return "", fmt.Errorf("checksum marshal: %w", err)
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+}
+
+// ConfigsMatch returns true if the two service configs produce identical checksums.
+// It returns an error if either config cannot be marshalled.
+func ConfigsMatch(a, b *ServiceConfig) (bool, error) {
+	sumA, err := Checksum(a)
+	if err != nil {
+		return false, fmt.Errorf("configs match: %w", err)
+	}
+	sumB, err := Checksum(b)
+	if err != nil {
+		return false, fmt.Errorf("configs match: %w", err)
+	}
+	return sumA == sumB, nil
 }

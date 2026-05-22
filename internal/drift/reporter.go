@@ -44,6 +44,17 @@ func (r *Reporter) Report(result DriftResult) error {
 	}
 }
 
+// ReportAll writes multiple drift results to the underlying writer in sequence.
+// It stops and returns the first error encountered.
+func (r *Reporter) ReportAll(results []DriftResult) error {
+	for _, result := range results {
+		if err := r.Report(result); err != nil {
+			return fmt.Errorf("reporting result for service %q: %w", result.Service, err)
+		}
+	}
+	return nil
+}
+
 func (r *Reporter) reportText(result DriftResult) error {
 	if !result.Drifted {
 		_, err := fmt.Fprintf(r.w, "[%s] %s: OK (no drift)\n",

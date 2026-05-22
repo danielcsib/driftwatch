@@ -2,91 +2,73 @@ package drift
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
+	"sort"
 )
 
-// ServiceConfig represents the expected configuration for a service.
+// ServiceConfig represents the desired and live configuration for a service.
 type ServiceConfig struct {
-	Name   string            `json:"name"`
-	Image  string            `json:"image"`
-	Env    map[string]string `json:"env"`
-	Labels map[string]string `json:"labels"`
+	Name     string            `json:"name"     yaml:"name"`
+	Image    string            `json:"image"    yaml:"image"`
+	Replicas int               `json:"replicas" yaml:"replicas"`
+	Env      map[string]string `json:"env"      yaml:"env"`
 }
 
-// DriftResult holds the comparison result between desired and actual state.
-type DriftResult struct {
-	ServiceName string
-	HasDrift    bool
-	Diffs       []string
+// DetectResult holds the outcome of comparing desired vs live config.
+type DetectResult struct {
+	Service       string
+	Drifted       bool
+	DriftedFields []string
 }
 
-// Detector compares deployed service state against source definitions.
+// Detector compares desired configs against live configs.
 type Detector struct{}
 
-// NewDetector creates a new Detector instance.
-func NewDetector() *Detector {
-	return &Detector{}
-}
+// NewDetector returns a new Detector.
+func NewDetector() *Detector { return &Detector{} }
 
-// Detect compares the desired config against the actual config and returns drift details.
-// It checks for differences in image, environment variables, and labels.
-// Keys present in actual but absent in desired are not flagged as drift;
-// only keys required by desired are enforced.
-func (d *Detector) Detect(desired, actual *ServiceConfig) DriftResult {
-	result := DriftResult{
-		ServiceName: desired.Name,
-		HasDrift:    false,
-		Diffs:       []string{},
+// Detect compares desired to live and returns a DetectResult.
+func (d *Detector) Detect(desired, live ServiceConfig) DetectResult {
+	result := DetectResult{Service: desired.Name}
+	var fields []string
+
+	if desired.Image != live.Image {
+		fields = append(fields, "image")
 	}
-
-	if desired.Image != actual.Image {
-		result.HasDrift = true
-		result.Diffs = append(result.Diffs, fmt.Sprintf("image: want %q, got %q", desired.Image, actual.Image))
+	if desired.Replicas != live.Replicas {
+		fields = append(fields, "replicas")
 	}
-
-	for k, wantVal := range desired.Env {
-		if gotVal, ok := actual.Env[k]; !ok {
-			result.HasDrift = true
-			result.Diffs = append(result.Diffs, fmt.Sprintf("env[%s]: missing (want %q)", k, wantVal))
-		} else if gotVal != wantVal {
-			result.HasDrift = true
-			result.Diffs = append(result.Diffs, fmt.Sprintf("env[%s]: want %q, got %q", k, wantVal, gotVal))
+	for k, dv := range desired.Env {
+		lv, ok := live.Env[k]
+		if !ok {
+			fields = append(fields, "env."+k+" (missing)")
+		} else if dv != lv {
+			fields = append(fields, "env."+k)
 		}
 	}
-
-	for k, wantVal := range desired.Labels {
-		if gotVal, ok := actual.Labels[k]; !ok {
-			result.HasDrift = true
-			result.Diffs = append(result.Diffs, fmt.Sprintf("label[%s]: missing (want %q)", k, wantVal))
-		} else if gotVal != wantVal {
-			result.HasDrift = true
-			result.Diffs = append(result.Diffs, fmt.Sprintf("label[%s]: want %q, got %q", k, wantVal, gotVal))
-		}
-	}
-
+	sort.Strings(fields)
+	result.DriftedFields = fields
+	result.Drifted = len(fields) > 0
 	return result
 }
 
-// Checksum returns a SHA-256 hash of the service config for quick equality checks.
-func Checksum(cfg *ServiceConfig) (string, error) {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return "", fmt.Errorf("checksum marshal: %w", err)
+// Checksum returns a SHA-256 hex digest of the canonical config representation.
+func Checksum(cfg ServiceConfig) string {
+	keys := make([]string, 0, len(cfg.Env))
+	for k := range cfg.Env {
+		keys = append(keys, k)
 	}
-	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+	sort.Strings(keys)
+
+	h := sha256.New()
+	fmt.Fprintf(h, "%s|%s|%d", cfg.Name, cfg.Image, cfg.Replicas)
+	for _, k := range keys {
+		fmt.Fprintf(h, "|%s=%s", k, cfg.Env[k])
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// ConfigsMatch returns true if the two service configs produce identical checksums.
-// It returns an error if either config cannot be marshalled.
-func ConfigsMatch(a, b *ServiceConfig) (bool, error) {
-	sumA, err := Checksum(a)
-	if err != nil {
-		return false, fmt.Errorf("configs match: %w", err)
-	}
-	sumB, err := Checksum(b)
-	if err != nil {
-		return false, fmt.Errorf("configs match: %w", err)
-	}
-	return sumA == sumB, nil
+// ConfigsMatch returns true when desired and live produce the same checksum.
+func ConfigsMatch(desired, live ServiceConfig) bool {
+	return Checksum(desired) == Checksum(live)
 }

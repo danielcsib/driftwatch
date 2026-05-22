@@ -80,3 +80,16 @@ func TestReporter_JSONOutput(t *testing.T) {
 		t.Errorf("expected 1 diff, got %d", len(decoded.Diffs))
 	}
 }
+
+func TestReporter_UnknownFormat(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewReporter(&buf, "xml")
+	result := DriftResult{
+		Service:   "api",
+		Drifted:   false,
+		CheckedAt: fixedTime,
+	}
+	if err := r.Report(result); err == nil {
+		t.Error("expected error for unknown format 'xml', got nil")
+	}
+}
